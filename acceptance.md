@@ -130,3 +130,17 @@
 - [x] Graceful error if matplotlib not installed
 - [x] Plotting functions exported from package
 - [x] Works with different model configurations
+
+## Task 10: Warm-start utilities
+
+### Acceptance Criteria
+- [x] regressor_index() returns column index of regressor in beta matrix
+- [x] regressor_coefficients() returns DataFrame with coef, bounds, mode, center
+- [x] warm_start_params() extracts k, m, sigma_obs, delta, beta for warm-starting
+- [x] seasonality_plot_df() creates DataFrame for plotting seasonality component
+- [x] get_changepoint_dates() returns Series of changepoint dates
+- [x] get_changepoint_magnitudes() returns DataFrame with dates and delta values
+- [x] Unfitted model raises RuntimeError
+- [x] Invalid regressor/seasonality names raise ValueError
+- [x] Works with different growth types (linear, logistic, flat)
+- [x] Utility functions exported from package

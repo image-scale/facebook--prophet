@@ -27,6 +27,14 @@ from timeweaver.visualization import (
     plot_components,
     plot_cross_validation_metric,
 )
+from timeweaver.utilities import (
+    regressor_index,
+    regressor_coefficients,
+    warm_start_params,
+    seasonality_plot_df,
+    get_changepoint_dates,
+    get_changepoint_magnitudes,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -51,5 +59,11 @@ __all__ = [
     "plot",
     "plot_components",
     "plot_cross_validation_metric",
+    "regressor_index",
+    "regressor_coefficients",
+    "warm_start_params",
+    "seasonality_plot_df",
+    "get_changepoint_dates",
+    "get_changepoint_magnitudes",
     "__version__",
 ]
