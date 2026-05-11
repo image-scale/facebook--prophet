@@ -116,3 +116,17 @@
 - [x] Invalid country raises ValueError
 - [x] Adding after fit raises RuntimeError
 - [x] Holiday functions exported from package
+
+## Task 9: Plotting forecasts and components
+
+### Acceptance Criteria
+- [x] plot() creates forecast plot with observations and predictions
+- [x] plot() supports uncertainty intervals
+- [x] plot() supports custom axes, labels, figsize, legend
+- [x] plot_components() plots trend, seasonality, holidays
+- [x] plot_components() includes extra regressors if present
+- [x] plot_cross_validation_metric() plots CV metrics by horizon
+- [x] All functions return matplotlib Figure
+- [x] Graceful error if matplotlib not installed
+- [x] Plotting functions exported from package
+- [x] Works with different model configurations

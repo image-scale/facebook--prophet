@@ -22,6 +22,11 @@ from timeweaver.holidays import (
     make_holidays_df,
     get_holiday_names,
 )
+from timeweaver.visualization import (
+    plot,
+    plot_components,
+    plot_cross_validation_metric,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -43,5 +48,8 @@ __all__ = [
     "load_model",
     "make_holidays_df",
     "get_holiday_names",
+    "plot",
+    "plot_components",
+    "plot_cross_validation_metric",
     "__version__",
 ]
