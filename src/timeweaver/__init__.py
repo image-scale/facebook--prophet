@@ -18,6 +18,10 @@ from timeweaver.storage import (
     save_model,
     load_model,
 )
+from timeweaver.holidays import (
+    make_holidays_df,
+    get_holiday_names,
+)
 
 __version__ = "0.1.0"
 __all__ = [
@@ -37,5 +41,7 @@ __all__ = [
     "model_from_json",
     "save_model",
     "load_model",
+    "make_holidays_df",
+    "get_holiday_names",
     "__version__",
 ]

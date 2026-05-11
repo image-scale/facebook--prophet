@@ -855,6 +855,53 @@ class TimeWeaver:
         }
         return self
 
+    def add_country_holidays(
+        self, country: str, province: str | None = None
+    ) -> "TimeWeaver":
+        """Add country holidays to the model.
+
+        Uses the holidays library to add holidays for the specified country.
+
+        Parameters
+        ----------
+        country : str
+            Country code (e.g., 'US', 'UK', 'DE').
+        province : str or None
+            Province/state code for regional holidays.
+
+        Returns
+        -------
+        TimeWeaver
+            The model instance for chaining.
+        """
+        if self.history is not None:
+            raise RuntimeError('Country holidays must be added prior to model fitting.')
+        self.country_holidays = country
+        return self
+
+    def _apply_country_holidays(self) -> None:
+        """Apply country holidays to the model's holidays DataFrame."""
+        if self.country_holidays is None:
+            return
+
+        from .holidays import make_holidays_df
+
+        history = self.history
+        assert history is not None
+
+        year_min = history['ds'].min().year
+        year_max = history['ds'].max().year
+        year_list = list(range(year_min - 1, year_max + 2))
+
+        country_holidays_df = make_holidays_df(year_list, self.country_holidays)
+
+        if self.holidays is not None:
+            self.holidays = pd.concat(
+                [self.holidays, country_holidays_df], ignore_index=True
+            )
+        else:
+            self.holidays = country_holidays_df
+
     def _parse_seasonality_args(
         self,
         name: str,
@@ -1164,6 +1211,7 @@ class TimeWeaver:
 
         self.history = self.prepare_dataframe(history, initialize_scales=True)
         self._set_auto_seasonalities()
+        self._apply_country_holidays()
 
         # Store holiday names before making features
         _, _, holiday_names = self._make_holiday_features(self.history)

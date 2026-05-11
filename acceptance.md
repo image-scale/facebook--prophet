@@ -102,3 +102,17 @@
 - [x] Works with regressors and holidays
 - [x] Unfitted model raises ValueError
 - [x] Storage functions exported from package
+
+## Task 8: Country holidays integration
+
+### Acceptance Criteria
+- [x] make_holidays_df() creates holiday dataframe for years and country
+- [x] get_holiday_names() returns all holiday names for a country
+- [x] add_country_holidays() adds country holidays to model
+- [x] Country holidays applied during fit()
+- [x] Combines with manual holidays if both present
+- [x] Supports multiple countries (US, UK, DE, FR)
+- [x] Supports province/state regional holidays
+- [x] Invalid country raises ValueError
+- [x] Adding after fit raises RuntimeError
+- [x] Holiday functions exported from package
