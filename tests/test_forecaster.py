@@ -18,6 +18,17 @@ def create_daily_data(start: str = "2012-01-01", periods: int = 365 * 2) -> pd.D
     return pd.DataFrame({'ds': dates, 'y': y})
 
 
+def create_subdaily_data(start: str = "2017-01-01", periods: int = 24 * 30) -> pd.DataFrame:
+    """Create synthetic sub-daily time series data."""
+    dates = pd.date_range(start=start, periods=periods, freq='h')  # lowercase 'h' for newer pandas
+    np.random.seed(42)
+    trend = np.linspace(10, 30, periods)
+    daily_pattern = 5 * np.sin(2 * np.pi * np.arange(periods) / 24)
+    noise = np.random.normal(0, 1, periods)
+    y = trend + daily_pattern + noise
+    return pd.DataFrame({'ds': dates, 'y': y})
+
+
 class TestTimeWeaverInit:
     """Tests for TimeWeaver initialization."""
 
@@ -436,3 +447,258 @@ class TestTimeWeaverConstantData:
         forecast = m.predict()
         # Predictions should be the constant value
         np.testing.assert_array_almost_equal(forecast['yhat'].values, 30.0, decimal=1)
+
+
+class TestTimeWeaverFourierSeries:
+    """Tests for Fourier series generation."""
+
+    def test_fourier_series_weekly(self):
+        """Test weekly Fourier series matches expected values."""
+        df = create_daily_data(periods=365)
+        mat = TimeWeaver.fourier_series(df['ds'], 7, 3)
+        # Shape should be (n_dates, 2 * series_order)
+        assert mat.shape == (365, 6)
+        # Values should be between -1 and 1
+        assert mat.min() >= -1.0
+        assert mat.max() <= 1.0
+
+    def test_fourier_series_yearly(self):
+        """Test yearly Fourier series."""
+        df = create_daily_data(periods=365)
+        mat = TimeWeaver.fourier_series(df['ds'], 365.25, 3)
+        assert mat.shape == (365, 6)
+
+    def test_fourier_series_order_validation(self):
+        """Test that invalid series_order raises error."""
+        df = create_daily_data(periods=10)
+        with pytest.raises(ValueError, match="series_order must be >= 1"):
+            TimeWeaver.fourier_series(df['ds'], 7, 0)
+
+    def test_make_seasonality_features(self):
+        """Test seasonality feature dataframe creation."""
+        df = create_daily_data(periods=100)
+        features = TimeWeaver.make_seasonality_features(df['ds'], 7, 3, 'weekly')
+        assert features.shape == (100, 6)
+        assert all(col.startswith('weekly_delim_') for col in features.columns)
+
+
+class TestTimeWeaverAutoSeasonality:
+    """Tests for automatic seasonality detection."""
+
+    def test_auto_yearly_enabled(self):
+        """Test yearly seasonality enabled with 2+ years data."""
+        df = create_daily_data(periods=365 * 2 + 10)
+        m = TimeWeaver()
+        assert m.yearly_seasonality == "auto"
+        m.fit(df)
+        assert 'yearly' in m.seasonalities
+        assert m.seasonalities['yearly']['period'] == 365.25
+        assert m.seasonalities['yearly']['fourier_order'] == 10
+
+    def test_auto_yearly_disabled_short_history(self):
+        """Test yearly seasonality disabled with < 2 years data."""
+        df = create_daily_data(periods=365)  # Only 1 year
+        m = TimeWeaver()
+        m.fit(df)
+        assert 'yearly' not in m.seasonalities
+
+    def test_yearly_seasonality_forced(self):
+        """Test yearly seasonality can be forced on."""
+        df = create_daily_data(periods=365)  # Short history
+        m = TimeWeaver(yearly_seasonality=True)
+        m.fit(df)
+        assert 'yearly' in m.seasonalities
+
+    def test_auto_weekly_enabled(self):
+        """Test weekly seasonality enabled with 2+ weeks data."""
+        df = create_daily_data(periods=20)  # More than 2 weeks
+        m = TimeWeaver()
+        m.fit(df)
+        assert 'weekly' in m.seasonalities
+        assert m.seasonalities['weekly']['period'] == 7
+        assert m.seasonalities['weekly']['fourier_order'] == 3
+
+    def test_auto_weekly_disabled_short_history(self):
+        """Test weekly seasonality disabled with < 2 weeks data."""
+        df = create_daily_data(periods=10)  # Less than 2 weeks
+        m = TimeWeaver()
+        m.fit(df)
+        assert 'weekly' not in m.seasonalities
+
+    def test_auto_weekly_disabled_weekly_spacing(self):
+        """Test weekly seasonality disabled with weekly spacing."""
+        df = create_daily_data(periods=100)
+        df = df.iloc[::7]  # Weekly data
+        m = TimeWeaver()
+        m.fit(df)
+        assert 'weekly' not in m.seasonalities
+
+    def test_auto_daily_enabled(self):
+        """Test daily seasonality enabled with sub-daily data."""
+        df = create_subdaily_data(periods=24 * 5)  # 5 days of hourly data
+        m = TimeWeaver()
+        m.fit(df)
+        assert 'daily' in m.seasonalities
+        assert m.seasonalities['daily']['period'] == 1
+        assert m.seasonalities['daily']['fourier_order'] == 4
+
+    def test_auto_daily_disabled_daily_data(self):
+        """Test daily seasonality disabled with daily data."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        assert 'daily' not in m.seasonalities
+
+    def test_custom_fourier_order(self):
+        """Test custom Fourier order for seasonality."""
+        df = create_daily_data(periods=365 * 2 + 10)
+        m = TimeWeaver(yearly_seasonality=7, weekly_seasonality=5)
+        m.fit(df)
+        assert m.seasonalities['yearly']['fourier_order'] == 7
+        assert m.seasonalities['weekly']['fourier_order'] == 5
+
+
+class TestTimeWeaverCustomSeasonality:
+    """Tests for custom seasonality."""
+
+    def test_add_custom_seasonality(self):
+        """Test adding a custom seasonality."""
+        m = TimeWeaver()
+        m.add_seasonality(name='monthly', period=30.5, fourier_order=5)
+        assert 'monthly' in m.seasonalities
+        assert m.seasonalities['monthly']['period'] == 30.5
+        assert m.seasonalities['monthly']['fourier_order'] == 5
+        assert m.seasonalities['monthly']['prior_scale'] == 10.0
+
+    def test_add_seasonality_with_prior_scale(self):
+        """Test adding seasonality with custom prior scale."""
+        m = TimeWeaver()
+        m.add_seasonality(name='monthly', period=30, fourier_order=5, prior_scale=2.0)
+        assert m.seasonalities['monthly']['prior_scale'] == 2.0
+
+    def test_add_seasonality_multiplicative(self):
+        """Test adding multiplicative seasonality."""
+        m = TimeWeaver()
+        m.add_seasonality(name='monthly', period=30, fourier_order=3, mode='multiplicative')
+        assert m.seasonalities['monthly']['mode'] == 'multiplicative'
+
+    def test_add_seasonality_invalid_prior_scale(self):
+        """Test that invalid prior_scale raises error."""
+        m = TimeWeaver()
+        with pytest.raises(ValueError, match='Prior scale must be > 0'):
+            m.add_seasonality(name='test', period=30, fourier_order=3, prior_scale=0)
+
+    def test_add_seasonality_invalid_fourier_order(self):
+        """Test that invalid fourier_order raises error."""
+        m = TimeWeaver()
+        with pytest.raises(ValueError, match='Fourier order must be > 0'):
+            m.add_seasonality(name='test', period=30, fourier_order=0)
+
+    def test_add_seasonality_after_fit_raises(self):
+        """Test that adding seasonality after fit raises error."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        with pytest.raises(RuntimeError, match='prior to model fitting'):
+            m.add_seasonality(name='monthly', period=30, fourier_order=3)
+
+    def test_duplicate_seasonality_name_allowed_override(self):
+        """Test that duplicate seasonality name updates the existing one."""
+        m = TimeWeaver()
+        m.add_seasonality(name='custom', period=30, fourier_order=3)
+        # Overriding with same name should work (updates)
+        m.add_seasonality(name='custom', period=15, fourier_order=2)
+        assert m.seasonalities['custom']['period'] == 15
+        assert m.seasonalities['custom']['fourier_order'] == 2
+
+    def test_reserved_name_raises(self):
+        """Test that reserved names raise error."""
+        m = TimeWeaver()
+        with pytest.raises(ValueError, match='reserved'):
+            m.add_seasonality(name='trend', period=30, fourier_order=3)
+
+    def test_can_override_builtin_seasonality(self):
+        """Test that built-in seasonality names can be overridden."""
+        m = TimeWeaver()
+        m.add_seasonality(name='weekly', period=7, fourier_order=5)
+        assert m.seasonalities['weekly']['fourier_order'] == 5
+
+
+class TestTimeWeaverConditionalSeasonality:
+    """Tests for conditional seasonality."""
+
+    def test_conditional_seasonality_basic(self):
+        """Test basic conditional seasonality."""
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_seasonality(
+            name='conditional_weekly',
+            period=7,
+            fourier_order=3,
+            condition_name='is_condition'
+        )
+        df = create_daily_data(periods=100)
+        df['is_condition'] = [False] * 50 + [True] * 50
+        m.fit(df)
+        assert m.seasonalities['conditional_weekly']['condition_name'] == 'is_condition'
+
+    def test_conditional_seasonality_missing_column_raises(self):
+        """Test that missing condition column raises error."""
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_seasonality(
+            name='cond',
+            period=7,
+            fourier_order=3,
+            condition_name='missing_col'
+        )
+        df = create_daily_data(periods=100)
+        with pytest.raises(ValueError, match='missing from dataframe'):
+            m.fit(df)
+
+    def test_conditional_seasonality_non_boolean_raises(self):
+        """Test that non-boolean condition column raises error."""
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_seasonality(
+            name='cond',
+            period=7,
+            fourier_order=3,
+            condition_name='bad_col'
+        )
+        df = create_daily_data(periods=100)
+        df['bad_col'] = [2] * 100  # Not boolean
+        with pytest.raises(ValueError, match='non-boolean'):
+            m.fit(df)
+
+
+class TestTimeWeaverSeasonalityModes:
+    """Tests for seasonality modes."""
+
+    def test_default_seasonality_mode(self):
+        """Test default seasonality mode is additive."""
+        m = TimeWeaver()
+        assert m.seasonality_mode == 'additive'
+
+    def test_multiplicative_mode(self):
+        """Test multiplicative seasonality mode."""
+        df = create_daily_data(periods=365 * 2 + 10)
+        m = TimeWeaver(seasonality_mode='multiplicative')
+        m.fit(df)
+        assert m.seasonalities['yearly']['mode'] == 'multiplicative'
+        assert m.seasonalities['weekly']['mode'] == 'multiplicative'
+
+    def test_mixed_modes(self):
+        """Test mixed additive and multiplicative modes."""
+        m = TimeWeaver(seasonality_mode='multiplicative')
+        m.add_seasonality(name='monthly', period=30, fourier_order=3, mode='additive')
+        assert m.seasonalities['monthly']['mode'] == 'additive'
+
+    def test_predict_with_seasonality(self):
+        """Test prediction includes seasonality components."""
+        df = create_daily_data(periods=365 * 2 + 10)
+        m = TimeWeaver()
+        m.fit(df)
+        forecast = m.predict()
+        assert 'weekly' in forecast.columns
+        assert 'yearly' in forecast.columns
+        assert 'additive_terms' in forecast.columns
+        assert 'multiplicative_terms' in forecast.columns
+        assert 'yhat' in forecast.columns

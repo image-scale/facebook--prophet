@@ -531,6 +531,409 @@ class TimeWeaver:
         """
         return m * np.ones_like(t)
 
+    @staticmethod
+    def fourier_series(
+        dates: pd.Series,
+        period: float,
+        series_order: int,
+    ) -> np.ndarray:
+        """Generate Fourier series components for seasonality.
+
+        Parameters
+        ----------
+        dates : pd.Series
+            Series of timestamps.
+        period : float
+            Number of days in the period.
+        series_order : int
+            Number of Fourier components.
+
+        Returns
+        -------
+        np.ndarray
+            Matrix with shape (len(dates), 2 * series_order) containing
+            sin and cos terms.
+        """
+        if series_order < 1:
+            raise ValueError("series_order must be >= 1")
+
+        epoch = pd.Timestamp("1970-01-01", tz=dates.dt.tz)
+        t = (dates - epoch).dt.total_seconds() / (24 * 60 * 60)
+
+        x_T = np.pi * 2 * t
+        fourier_components = np.empty((dates.shape[0], 2 * series_order))
+        for i in range(series_order):
+            c = (i + 1) / period * x_T
+            fourier_components[:, 2 * i] = np.sin(c)
+            fourier_components[:, (2 * i) + 1] = np.cos(c)
+        return fourier_components
+
+    @classmethod
+    def make_seasonality_features(
+        cls,
+        dates: pd.Series,
+        period: float,
+        series_order: int,
+        prefix: str,
+    ) -> pd.DataFrame:
+        """Create a dataframe of seasonality features.
+
+        Parameters
+        ----------
+        dates : pd.Series
+            Series of timestamps.
+        period : float
+            Number of days in the period.
+        series_order : int
+            Number of Fourier components.
+        prefix : str
+            Column name prefix.
+
+        Returns
+        -------
+        pd.DataFrame
+            Dataframe with seasonality feature columns.
+        """
+        features = cls.fourier_series(dates, period, series_order)
+        columns = [
+            f'{prefix}_delim_{i + 1}'
+            for i in range(features.shape[1])
+        ]
+        return pd.DataFrame(features, columns=columns)
+
+    def _validate_column_name(
+        self,
+        name: str,
+        check_holidays: bool = True,
+        check_seasonalities: bool = True,
+        check_regressors: bool = True,
+    ) -> None:
+        """Validate name for seasonality, holiday, or regressor.
+
+        Parameters
+        ----------
+        name : str
+            Name to validate.
+        check_holidays : bool
+            Check if name conflicts with holidays.
+        check_seasonalities : bool
+            Check if name conflicts with seasonalities.
+        check_regressors : bool
+            Check if name conflicts with regressors.
+        """
+        if '_delim_' in name:
+            raise ValueError('Name cannot contain "_delim_"')
+        reserved_names = [
+            'trend', 'additive_terms', 'daily', 'weekly', 'yearly',
+            'holidays', 'zeros', 'extra_regressors_additive', 'yhat',
+            'extra_regressors_multiplicative', 'multiplicative_terms',
+        ]
+        rn_l = [n + '_lower' for n in reserved_names]
+        rn_u = [n + '_upper' for n in reserved_names]
+        reserved_names.extend(rn_l)
+        reserved_names.extend(rn_u)
+        reserved_names.extend(['ds', 'y', 'cap', 'floor', 'y_scaled', 'cap_scaled'])
+        if name in reserved_names:
+            raise ValueError(f'Name {name!r} is reserved.')
+        if check_holidays and self.holidays is not None:
+            if name in self.holidays['holiday'].unique():
+                raise ValueError(f'Name {name!r} already used for a holiday.')
+        if check_seasonalities and name in self.seasonalities:
+            raise ValueError(f'Name {name!r} already used for a seasonality.')
+        if check_regressors and name in self.extra_regressors:
+            raise ValueError(f'Name {name!r} already used for an added regressor.')
+
+    def add_seasonality(
+        self,
+        name: str,
+        period: float,
+        fourier_order: int,
+        prior_scale: float | None = None,
+        mode: Literal["additive", "multiplicative"] | None = None,
+        condition_name: str | None = None,
+    ) -> "TimeWeaver":
+        """Add a custom seasonal component.
+
+        Parameters
+        ----------
+        name : str
+            Name of the seasonality component.
+        period : float
+            Number of days in one period.
+        fourier_order : int
+            Number of Fourier components.
+        prior_scale : float or None
+            Prior scale for this component. Defaults to seasonality_prior_scale.
+        mode : str or None
+            'additive' or 'multiplicative'. Defaults to seasonality_mode.
+        condition_name : str or None
+            Column name for conditional seasonality.
+
+        Returns
+        -------
+        TimeWeaver
+            The model instance for chaining.
+        """
+        if self.history is not None:
+            raise RuntimeError('Seasonality must be added prior to model fitting.')
+        if name not in ['daily', 'weekly', 'yearly']:
+            self._validate_column_name(name, check_seasonalities=False)
+        if prior_scale is None:
+            ps = self.seasonality_prior_scale
+        else:
+            ps = float(prior_scale)
+        if ps <= 0:
+            raise ValueError('Prior scale must be > 0')
+        if fourier_order <= 0:
+            raise ValueError('Fourier order must be > 0')
+        if mode is None:
+            mode = self.seasonality_mode
+        if mode not in ('additive', 'multiplicative'):
+            raise ValueError('mode must be "additive" or "multiplicative"')
+        if condition_name is not None:
+            self._validate_column_name(condition_name)
+        self.seasonalities[name] = {
+            'period': period,
+            'fourier_order': fourier_order,
+            'prior_scale': ps,
+            'mode': mode,
+            'condition_name': condition_name,
+        }
+        return self
+
+    def _parse_seasonality_args(
+        self,
+        name: str,
+        arg: Literal["auto"] | bool | int,
+        auto_disable: bool,
+        default_order: int,
+    ) -> int:
+        """Get number of Fourier components for built-in seasonalities.
+
+        Parameters
+        ----------
+        name : str
+            Name of the seasonality component.
+        arg : 'auto', True, False, or int
+            User-specified value.
+        auto_disable : bool
+            Whether seasonality should be disabled when 'auto'.
+        default_order : int
+            Default Fourier order.
+
+        Returns
+        -------
+        int
+            Number of Fourier components, or 0 if disabled.
+        """
+        if arg == 'auto':
+            fourier_order = 0
+            if name in self.seasonalities:
+                logger.info(
+                    f'Found custom seasonality named {name!r}, disabling '
+                    f'built-in {name!r} seasonality.'
+                )
+            elif auto_disable:
+                logger.info(
+                    f'Disabling {name} seasonality. Run with '
+                    f'{name}_seasonality=True to override this.'
+                )
+            else:
+                fourier_order = default_order
+        elif arg is True:
+            fourier_order = default_order
+        elif arg is False:
+            fourier_order = 0
+        else:
+            fourier_order = int(arg)
+        return fourier_order
+
+    def _set_auto_seasonalities(self) -> None:
+        """Set seasonalities that were left on auto.
+
+        Turns on yearly seasonality if there is >= 2 years of history.
+        Turns on weekly seasonality if there is >= 2 weeks and spacing < 7 days.
+        Turns on daily seasonality if there is >= 2 days and spacing < 1 day.
+        """
+        history = self.history
+        assert history is not None
+        first = history['ds'].min()
+        last = history['ds'].max()
+        dt = history['ds'].diff()
+        nonzero_idx = dt.values.nonzero()[0]
+        if len(nonzero_idx) == 0:
+            min_dt = pd.Timedelta(days=1)
+        else:
+            min_dt = dt.iloc[nonzero_idx].min()
+
+        # Yearly seasonality
+        yearly_disable = last - first < pd.Timedelta(days=730)
+        fourier_order = self._parse_seasonality_args(
+            'yearly', self.yearly_seasonality, yearly_disable, 10
+        )
+        if fourier_order > 0:
+            self.seasonalities['yearly'] = {
+                'period': 365.25,
+                'fourier_order': fourier_order,
+                'prior_scale': self.seasonality_prior_scale,
+                'mode': self.seasonality_mode,
+                'condition_name': None,
+            }
+
+        # Weekly seasonality
+        weekly_disable = (
+            (last - first < pd.Timedelta(weeks=2)) or
+            (min_dt >= pd.Timedelta(weeks=1))
+        )
+        fourier_order = self._parse_seasonality_args(
+            'weekly', self.weekly_seasonality, weekly_disable, 3
+        )
+        if fourier_order > 0:
+            self.seasonalities['weekly'] = {
+                'period': 7,
+                'fourier_order': fourier_order,
+                'prior_scale': self.seasonality_prior_scale,
+                'mode': self.seasonality_mode,
+                'condition_name': None,
+            }
+
+        # Daily seasonality
+        daily_disable = (
+            (last - first < pd.Timedelta(days=2)) or
+            (min_dt >= pd.Timedelta(days=1))
+        )
+        fourier_order = self._parse_seasonality_args(
+            'daily', self.daily_seasonality, daily_disable, 4
+        )
+        if fourier_order > 0:
+            self.seasonalities['daily'] = {
+                'period': 1,
+                'fourier_order': fourier_order,
+                'prior_scale': self.seasonality_prior_scale,
+                'mode': self.seasonality_mode,
+                'condition_name': None,
+            }
+
+    def _make_all_seasonality_features(
+        self, df: pd.DataFrame
+    ) -> tuple[pd.DataFrame, list[float], pd.DataFrame, dict[str, list[str]]]:
+        """Create all seasonality features.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Dataframe with dates for computing features.
+
+        Returns
+        -------
+        tuple
+            (seasonal_features, prior_scales, component_cols, modes)
+        """
+        seasonal_features = []
+        prior_scales: list[float] = []
+        modes: dict[str, list[str]] = {'additive': [], 'multiplicative': []}
+
+        for name, props in self.seasonalities.items():
+            features = self.make_seasonality_features(
+                df['ds'],
+                props['period'],
+                props['fourier_order'],
+                name,
+            )
+            if props['condition_name'] is not None:
+                features[~df[props['condition_name']]] = 0
+            seasonal_features.append(features)
+            prior_scales.extend([props['prior_scale']] * features.shape[1])
+            modes[props['mode']].append(name)
+
+        # Dummy to prevent empty X
+        if len(seasonal_features) == 0:
+            seasonal_features.append(
+                pd.DataFrame({'zeros': np.zeros(df.shape[0])})
+            )
+            prior_scales.append(1.0)
+
+        seasonal_features_df = pd.concat(seasonal_features, axis=1)
+        component_cols, modes = self._regressor_column_matrix(
+            seasonal_features_df, modes
+        )
+        return seasonal_features_df, prior_scales, component_cols, modes
+
+    def _regressor_column_matrix(
+        self,
+        seasonal_features: pd.DataFrame,
+        modes: dict[str, list[str]],
+    ) -> tuple[pd.DataFrame, dict[str, list[str]]]:
+        """Create matrix indicating which columns correspond to which components.
+
+        Parameters
+        ----------
+        seasonal_features : pd.DataFrame
+            Seasonal features dataframe.
+        modes : dict
+            Dictionary with 'additive' and 'multiplicative' component names.
+
+        Returns
+        -------
+        tuple
+            (component_cols, modes)
+        """
+        components = pd.DataFrame({
+            'col': np.arange(seasonal_features.shape[1]),
+            'component': [
+                x.split('_delim_')[0] for x in seasonal_features.columns
+            ],
+        })
+
+        for mode in ('additive', 'multiplicative'):
+            components = self._add_group_component(
+                components, mode + '_terms', modes[mode]
+            )
+            modes[mode].append(mode + '_terms')
+
+        component_cols = pd.crosstab(
+            components['col'], components['component'],
+        ).sort_index(level='col')
+
+        for name in ['additive_terms', 'multiplicative_terms']:
+            if name not in component_cols:
+                component_cols[name] = 0
+        component_cols.drop('zeros', axis=1, inplace=True, errors='ignore')
+
+        if self.train_component_cols is not None:
+            component_cols = component_cols[self.train_component_cols.columns]
+
+        return component_cols, modes
+
+    def _add_group_component(
+        self,
+        components: pd.DataFrame,
+        name: str,
+        group: list[str],
+    ) -> pd.DataFrame:
+        """Add a group component containing all components in group.
+
+        Parameters
+        ----------
+        components : pd.DataFrame
+            Components dataframe.
+        name : str
+            Name of the group component.
+        group : list
+            List of component names in the group.
+
+        Returns
+        -------
+        pd.DataFrame
+            Updated components dataframe.
+        """
+        new_comp = components[components['component'].isin(set(group))].copy()
+        group_cols = new_comp['col'].unique()
+        if len(group_cols) > 0:
+            new_comp = pd.DataFrame({'col': group_cols, 'component': name})
+            components = pd.concat([components, new_comp], ignore_index=True)
+        return components
+
     def fit(self, df: pd.DataFrame, **kwargs: Any) -> "TimeWeaver":
         """Fit the TimeWeaver model.
 
@@ -567,6 +970,12 @@ class TimeWeaver:
         ).sort_values()
 
         self.history = self.prepare_dataframe(history, initialize_scales=True)
+        self._set_auto_seasonalities()
+        seasonal_features, prior_scales, component_cols, modes = (
+            self._make_all_seasonality_features(self.history)
+        )
+        self.train_component_cols = component_cols
+        self.component_modes = modes
         self.set_changepoints()
         self.fit_kwargs = kwargs.copy()
 
@@ -578,10 +987,12 @@ class TimeWeaver:
             k, m = self.logistic_growth_init(self.history)
 
         n_changepoints = len(self.changepoints_t) if self.changepoints_t is not None else 0
+        n_features = seasonal_features.shape[1]
         self.params = {
             'k': np.array([[k]]),
             'm': np.array([[m]]),
             'delta': np.zeros((1, n_changepoints)),
+            'beta': np.zeros((1, n_features)),
             'sigma_obs': np.array([[1e-9]]),
         }
 
@@ -647,6 +1058,7 @@ class TimeWeaver:
             df = self.prepare_dataframe(df.copy())
 
         df['trend'] = self.predict_trend(df)
+        seasonal_components = self._predict_seasonal_components(df)
 
         cols = ['ds', 'trend']
         if 'cap' in df:
@@ -654,12 +1066,40 @@ class TimeWeaver:
         if self.logistic_floor:
             cols.append('floor')
 
-        result = df[cols].copy()
-        result['additive_terms'] = 0.0
-        result['multiplicative_terms'] = 0.0
-        result['yhat'] = result['trend'] * (1 + result['multiplicative_terms']) + result['additive_terms']
-
+        result = pd.concat([df[cols], seasonal_components], axis=1)
+        result['yhat'] = (
+            result['trend'] * (1 + result['multiplicative_terms'])
+            + result['additive_terms']
+        )
         return result
+
+    def _predict_seasonal_components(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Predict seasonality components.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Prediction dataframe.
+
+        Returns
+        -------
+        pd.DataFrame
+            Dataframe with seasonal components.
+        """
+        seasonal_features, _, component_cols, _ = (
+            self._make_all_seasonality_features(df)
+        )
+
+        X = seasonal_features.values
+        data = {}
+        for component in component_cols.columns:
+            beta_c = self.params['beta'] * component_cols[component].values
+            comp = np.matmul(X, beta_c.transpose())
+            assert self.component_modes is not None
+            if component in self.component_modes['additive']:
+                comp *= self.y_scale
+            data[component] = np.nanmean(comp, axis=1)
+        return pd.DataFrame(data)
 
     def make_future_dataframe(
         self,
