@@ -20,3 +20,10 @@
 **Commit**: Add holiday effects with configurable windows and prior scales
 **Acceptance**: 9/9 criteria met
 **Verification**: tests FAIL on previous state (holiday features not present), PASS on current state
+
+## Round 4
+**Task**: Task 4 — Extra regressors support
+**Files modified**: src/timeweaver/forecaster.py, tests/test_forecaster.py
+**Commit**: Add extra regressors support with standardization
+**Acceptance**: 10/10 criteria met
+**Verification**: tests FAIL on previous state (add_regressor not present), PASS on current state

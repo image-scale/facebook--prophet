@@ -46,3 +46,17 @@
 - [x] holidays_mode can be 'additive' or 'multiplicative'
 - [x] Validation: holidays must have ds and holiday columns
 - [x] Validation: lower_window must be <= 0, upper_window >= 0
+
+## Task 4: Extra regressors support
+
+### Acceptance Criteria
+- [x] add_regressor(name, prior_scale, standardize, mode) adds custom regressor
+- [x] Regressor column must be present in fit() and predict() dataframes
+- [x] Regressors must be added prior to model fitting
+- [x] Regressor can be 'additive' or 'multiplicative' mode
+- [x] Auto standardization: standardize continuous, not binary regressors
+- [x] Forced standardization via standardize=True
+- [x] Regressor features integrated into prediction
+- [x] extra_regressors_additive and extra_regressors_multiplicative group components
+- [x] Multiple regressors supported
+- [x] Method chaining supported for add_regressor

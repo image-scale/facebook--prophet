@@ -802,6 +802,59 @@ class TimeWeaver:
         }
         return self
 
+    def add_regressor(
+        self,
+        name: str,
+        prior_scale: float | None = None,
+        standardize: Literal["auto"] | bool = "auto",
+        mode: Literal["additive", "multiplicative"] | None = None,
+    ) -> "TimeWeaver":
+        """Add an extra regressor for fitting and predicting.
+
+        The dataframe passed to fit() and predict() must have a column with
+        this name. The regressor will be standardized by default unless it is
+        binary. The regression coefficient is given a prior with the specified
+        scale parameter.
+
+        Parameters
+        ----------
+        name : str
+            Name of the regressor column.
+        prior_scale : float or None
+            Scale for the normal prior. Defaults to holidays_prior_scale.
+        standardize : 'auto', True, or False
+            Whether to standardize the regressor. 'auto' standardizes unless
+            the column is binary (0/1).
+        mode : str or None
+            'additive' or 'multiplicative'. Defaults to seasonality_mode.
+
+        Returns
+        -------
+        TimeWeaver
+            The model instance for chaining.
+        """
+        if self.history is not None:
+            raise RuntimeError('Regressors must be added prior to model fitting.')
+        self._validate_column_name(name, check_regressors=False)
+        if prior_scale is None:
+            prior_scale = float(self.holidays_prior_scale)
+        else:
+            prior_scale = float(prior_scale)
+        if prior_scale <= 0:
+            raise ValueError('Prior scale must be > 0')
+        if mode is None:
+            mode = self.seasonality_mode
+        if mode not in ('additive', 'multiplicative'):
+            raise ValueError('mode must be "additive" or "multiplicative"')
+        self.extra_regressors[name] = {
+            'prior_scale': prior_scale,
+            'standardize': standardize,
+            'mu': 0.0,
+            'std': 1.0,
+            'mode': mode,
+        }
+        return self
+
     def _parse_seasonality_args(
         self,
         name: str,
@@ -956,6 +1009,12 @@ class TimeWeaver:
             else:
                 modes['additive'].append('holidays')
 
+        # Extra regressors
+        for name, props in self.extra_regressors.items():
+            seasonal_features.append(pd.DataFrame({name: df[name].values}))
+            prior_scales.append(props['prior_scale'])
+            modes[props['mode']].append(name)
+
         # Dummy to prevent empty X
         if len(seasonal_features) == 0:
             seasonal_features.append(
@@ -1006,6 +1065,18 @@ class TimeWeaver:
             components = self._add_group_component(
                 components, 'holidays', list(holiday_names_in_cols)
             )
+
+        # Add extra_regressors_additive and extra_regressors_multiplicative groups
+        for mode in ('additive', 'multiplicative'):
+            regressors_by_mode = [
+                r for r, props in self.extra_regressors.items()
+                if props['mode'] == mode
+            ]
+            if regressors_by_mode:
+                components = self._add_group_component(
+                    components, 'extra_regressors_' + mode, regressors_by_mode
+                )
+                modes[mode].append('extra_regressors_' + mode)
 
         for mode in ('additive', 'multiplicative'):
             components = self._add_group_component(

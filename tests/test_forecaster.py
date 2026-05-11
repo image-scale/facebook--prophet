@@ -873,3 +873,175 @@ class TestTimeWeaverHolidays:
         future = m.make_future_dataframe(periods=365, include_history=False)
         forecast = m.predict(future)
         assert 'holidays' in forecast.columns
+
+
+class TestTimeWeaverExtraRegressors:
+    """Tests for extra regressors."""
+
+    def test_add_regressor_basic(self):
+        """Test adding a basic regressor."""
+        m = TimeWeaver()
+        m.add_regressor('temperature')
+        assert 'temperature' in m.extra_regressors
+        assert m.extra_regressors['temperature']['mode'] == 'additive'
+
+    def test_add_regressor_with_prior_scale(self):
+        """Test adding regressor with custom prior scale."""
+        m = TimeWeaver()
+        m.add_regressor('promo', prior_scale=5.0)
+        assert m.extra_regressors['promo']['prior_scale'] == 5.0
+
+    def test_add_regressor_multiplicative(self):
+        """Test adding multiplicative regressor."""
+        m = TimeWeaver()
+        m.add_regressor('price', mode='multiplicative')
+        assert m.extra_regressors['price']['mode'] == 'multiplicative'
+
+    def test_add_regressor_after_fit_raises(self):
+        """Test that adding regressor after fit raises error."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        with pytest.raises(RuntimeError, match='prior to model fitting'):
+            m.add_regressor('temp')
+
+    def test_add_regressor_invalid_prior_scale(self):
+        """Test that invalid prior_scale raises error."""
+        m = TimeWeaver()
+        with pytest.raises(ValueError, match='Prior scale must be > 0'):
+            m.add_regressor('temp', prior_scale=0)
+
+    def test_add_regressor_invalid_mode(self):
+        """Test that invalid mode raises error."""
+        m = TimeWeaver()
+        with pytest.raises(ValueError, match='mode must be'):
+            m.add_regressor('temp', mode='invalid')
+
+    def test_add_regressor_reserved_name_raises(self):
+        """Test that reserved names raise error."""
+        m = TimeWeaver()
+        with pytest.raises(ValueError, match='reserved'):
+            m.add_regressor('trend')
+
+    def test_add_regressor_duplicate_overrides(self):
+        """Test that duplicate regressor name overrides previous."""
+        m = TimeWeaver()
+        m.add_regressor('temp', prior_scale=5.0)
+        m.add_regressor('temp', prior_scale=10.0)
+        assert m.extra_regressors['temp']['prior_scale'] == 10.0
+
+    def test_regressor_in_fit(self):
+        """Test fitting with a regressor."""
+        df = create_daily_data(periods=100)
+        df['temperature'] = np.random.randn(100)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('temperature')
+        m.fit(df)
+        assert 'temperature' in m.extra_regressors
+
+    def test_regressor_missing_raises(self):
+        """Test that missing regressor column raises error."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.add_regressor('temperature')
+        with pytest.raises(ValueError, match='Regressor.*missing'):
+            m.fit(df)
+
+    def test_regressor_nan_raises(self):
+        """Test that NaN in regressor raises error."""
+        df = create_daily_data(periods=100)
+        df['temperature'] = np.random.randn(100)
+        df.loc[5, 'temperature'] = np.nan
+        m = TimeWeaver()
+        m.add_regressor('temperature')
+        with pytest.raises(ValueError, match='Found NaN'):
+            m.fit(df)
+
+    def test_regressor_in_prediction(self):
+        """Test that regressor appears in prediction."""
+        df = create_daily_data(periods=100)
+        df['temperature'] = np.random.randn(100)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('temperature')
+        m.fit(df)
+        forecast = m.predict()
+        assert 'temperature' in forecast.columns
+        assert 'extra_regressors_additive' in forecast.columns
+
+    def test_regressor_multiplicative_in_prediction(self):
+        """Test multiplicative regressor in prediction."""
+        df = create_daily_data(periods=100)
+        df['promo'] = np.random.choice([0, 1], size=100)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('promo', mode='multiplicative')
+        m.fit(df)
+        forecast = m.predict()
+        assert 'promo' in forecast.columns
+        assert 'extra_regressors_multiplicative' in forecast.columns
+
+    def test_regressor_standardization_auto(self):
+        """Test auto standardization for non-binary regressor."""
+        df = create_daily_data(periods=100)
+        df['temperature'] = np.random.randn(100) * 10 + 20
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('temperature')
+        m.fit(df)
+        # Non-binary column should be standardized
+        assert m.extra_regressors['temperature']['std'] != 1.0
+
+    def test_regressor_no_standardization_binary(self):
+        """Test no standardization for binary regressor."""
+        df = create_daily_data(periods=100)
+        df['promo'] = np.random.choice([0, 1], size=100).astype(float)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('promo')
+        m.fit(df)
+        # Binary column should not be standardized
+        assert m.extra_regressors['promo']['mu'] == 0.0
+        assert m.extra_regressors['promo']['std'] == 1.0
+
+    def test_regressor_forced_standardization(self):
+        """Test forced standardization."""
+        df = create_daily_data(periods=100)
+        df['promo'] = np.random.choice([0, 1], size=100).astype(float)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('promo', standardize=True)
+        m.fit(df)
+        # Should be standardized even though binary
+        assert m.extra_regressors['promo']['mu'] != 0.0 or m.extra_regressors['promo']['std'] != 1.0
+
+    def test_regressor_future_prediction(self):
+        """Test regressor in future predictions."""
+        df = create_daily_data(periods=100)
+        df['temperature'] = np.random.randn(100)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('temperature')
+        m.fit(df)
+        future = m.make_future_dataframe(periods=30, include_history=False)
+        future['temperature'] = np.random.randn(30)
+        forecast = m.predict(future)
+        assert len(forecast) == 30
+        assert 'temperature' in forecast.columns
+
+    def test_multiple_regressors(self):
+        """Test multiple regressors."""
+        df = create_daily_data(periods=100)
+        df['temp'] = np.random.randn(100)
+        df['promo'] = np.random.choice([0, 1], size=100)
+        m = TimeWeaver(weekly_seasonality=False, yearly_seasonality=False)
+        m.add_regressor('temp')
+        m.add_regressor('promo', mode='multiplicative')
+        m.fit(df)
+        forecast = m.predict()
+        assert 'temp' in forecast.columns
+        assert 'promo' in forecast.columns
+        assert 'extra_regressors_additive' in forecast.columns
+        assert 'extra_regressors_multiplicative' in forecast.columns
+
+    def test_regressor_chaining(self):
+        """Test that add_regressor returns self for chaining."""
+        m = TimeWeaver()
+        result = m.add_regressor('temp').add_regressor('promo')
+        assert result is m
+        assert 'temp' in m.extra_regressors
+        assert 'promo' in m.extra_regressors
