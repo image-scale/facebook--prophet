@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "tmux": {
+      "command": "npx",
+      "args": [
+        "-y",
+        "--registry",
+        "https://npmmirror.xaminim.com/",
+        "@nlp-eng/tmux-mcp"
+      ],
+      "env": {
+        "TMUX_MCP_DONE_DIR": "/tmp"
+      }
+    }
+  }
+}
