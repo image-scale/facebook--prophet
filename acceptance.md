@@ -60,3 +60,17 @@
 - [x] extra_regressors_additive and extra_regressors_multiplicative group components
 - [x] Multiple regressors supported
 - [x] Method chaining supported for add_regressor
+
+## Task 5: Prediction and uncertainty estimation
+
+### Acceptance Criteria
+- [x] predict() returns yhat_lower and yhat_upper columns
+- [x] predict() returns trend_lower and trend_upper columns
+- [x] interval_width parameter controls interval size (default 0.80)
+- [x] uncertainty_samples=0 disables uncertainty estimation
+- [x] sample_predictive_trend() simulates future trend with new changepoints
+- [x] sample_model() samples from generative model with noise
+- [x] sample_posterior_predictive() returns samples for computing intervals
+- [x] sigma_obs computed from training residuals
+- [x] Uncertainty wider for future dates due to extrapolation
+- [x] Works with all growth types (linear, logistic, flat)

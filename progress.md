@@ -27,3 +27,10 @@
 **Commit**: Add extra regressors support with standardization
 **Acceptance**: 10/10 criteria met
 **Verification**: tests FAIL on previous state (add_regressor not present), PASS on current state
+
+## Round 5
+**Task**: Task 5 — Prediction and uncertainty estimation
+**Files modified**: src/timeweaver/forecaster.py, tests/test_forecaster.py
+**Commit**: Add prediction uncertainty with simulated trend extrapolation
+**Acceptance**: 10/10 criteria met
+**Verification**: tests FAIL on previous state (uncertainty methods not present), PASS on current state

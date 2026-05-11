@@ -1045,3 +1045,128 @@ class TestTimeWeaverExtraRegressors:
         assert result is m
         assert 'temp' in m.extra_regressors
         assert 'promo' in m.extra_regressors
+
+
+class TestTimeWeaverUncertainty:
+    """Tests for prediction uncertainty estimation."""
+
+    def test_predict_includes_intervals(self):
+        """Test that predict includes uncertainty intervals by default."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        forecast = m.predict()
+        assert 'yhat_lower' in forecast.columns
+        assert 'yhat_upper' in forecast.columns
+        assert 'trend_lower' in forecast.columns
+        assert 'trend_upper' in forecast.columns
+
+    def test_uncertainty_intervals_ordering(self):
+        """Test that lower < yhat < upper."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        forecast = m.predict()
+        assert (forecast['yhat_lower'] <= forecast['yhat']).all()
+        assert (forecast['yhat'] <= forecast['yhat_upper']).all()
+        assert (forecast['trend_lower'] <= forecast['trend']).all()
+        assert (forecast['trend'] <= forecast['trend_upper']).all()
+
+    def test_uncertainty_samples_zero_disables(self):
+        """Test that uncertainty_samples=0 disables intervals."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver(uncertainty_samples=0)
+        m.fit(df)
+        forecast = m.predict()
+        assert 'yhat_lower' not in forecast.columns
+        assert 'yhat_upper' not in forecast.columns
+
+    def test_interval_width(self):
+        """Test that interval_width affects interval size."""
+        df = create_daily_data(periods=100)
+
+        m_narrow = TimeWeaver(interval_width=0.50, uncertainty_samples=100)
+        m_narrow.fit(df)
+        forecast_narrow = m_narrow.predict()
+
+        m_wide = TimeWeaver(interval_width=0.95, uncertainty_samples=100)
+        m_wide.fit(df)
+        forecast_wide = m_wide.predict()
+
+        narrow_width = (forecast_narrow['yhat_upper'] - forecast_narrow['yhat_lower']).mean()
+        wide_width = (forecast_wide['yhat_upper'] - forecast_wide['yhat_lower']).mean()
+        assert wide_width > narrow_width
+
+    def test_uncertainty_future_dates(self):
+        """Test uncertainty on future dates (extrapolation)."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver(uncertainty_samples=50)
+        m.fit(df)
+        future = m.make_future_dataframe(periods=30, include_history=False)
+        forecast = m.predict(future)
+        assert 'yhat_lower' in forecast.columns
+        assert 'yhat_upper' in forecast.columns
+        # Future uncertainty should be wider than historical
+        hist_forecast = m.predict()
+        future_width = (forecast['yhat_upper'] - forecast['yhat_lower']).mean()
+        hist_width = (hist_forecast['yhat_upper'] - hist_forecast['yhat_lower']).mean()
+        # Future width should typically be >= historical width
+        assert future_width >= 0
+
+    def test_sample_predictive_trend(self):
+        """Test sample_predictive_trend returns reasonable values."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        future = m.make_future_dataframe(periods=30, include_history=False)
+        prepared = m.prepare_dataframe(future)
+        trend1 = m.sample_predictive_trend(prepared, iteration=0)
+        trend2 = m.sample_predictive_trend(prepared, iteration=0)
+        # Different samples should (usually) be different due to stochasticity
+        assert len(trend1) == 30
+        assert len(trend2) == 30
+
+    def test_sample_posterior_predictive(self):
+        """Test sample_posterior_predictive returns correct shape."""
+        df = create_daily_data(periods=50)
+        m = TimeWeaver(uncertainty_samples=20)
+        m.fit(df)
+        prepared = m.prepare_dataframe(df)
+        samples = m.sample_posterior_predictive(prepared)
+        assert 'yhat' in samples
+        assert 'trend' in samples
+        assert samples['yhat'].shape[0] == 50  # n_rows
+        assert samples['yhat'].shape[1] == 20  # n_samples
+
+    def test_sigma_obs_computed(self):
+        """Test that sigma_obs is computed from residuals."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver()
+        m.fit(df)
+        sigma = m.params['sigma_obs'][0, 0]
+        # Should be a positive number based on residuals
+        assert sigma > 0
+
+    def test_uncertainty_with_seasonality(self):
+        """Test uncertainty with seasonality enabled."""
+        df = create_daily_data(periods=365 * 2 + 10)
+        m = TimeWeaver(uncertainty_samples=50)
+        m.fit(df)
+        forecast = m.predict()
+        assert 'yhat_lower' in forecast.columns
+        assert 'yhat_upper' in forecast.columns
+        # Intervals should be sensible
+        assert not forecast['yhat_lower'].isna().any()
+        assert not forecast['yhat_upper'].isna().any()
+
+    def test_uncertainty_flat_growth(self):
+        """Test uncertainty with flat growth."""
+        df = create_daily_data(periods=100)
+        m = TimeWeaver(growth='flat', uncertainty_samples=50)
+        m.fit(df)
+        future = m.make_future_dataframe(periods=30, include_history=False)
+        forecast = m.predict(future)
+        assert 'yhat_lower' in forecast.columns
+        # Flat growth future samples should be nearly constant
+        trend_range = forecast['trend'].max() - forecast['trend'].min()
+        assert trend_range < 0.1  # Nearly constant

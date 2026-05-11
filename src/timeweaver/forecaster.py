@@ -1198,6 +1198,11 @@ class TimeWeaver:
             self.params['k'] = self.params['k'] + self.params['delta'].reshape(-1)
             self.params['delta'] = np.zeros(self.params['delta'].shape).reshape((-1, 1))
 
+        # Compute sigma_obs from residuals for uncertainty estimation
+        y_pred = self.predict_trend(self.history)
+        residuals = self.history['y'].values - y_pred
+        self.params['sigma_obs'] = np.array([[np.std(residuals) / self.y_scale]])
+
         return self
 
     def predict_trend(self, df: pd.DataFrame) -> np.ndarray:
@@ -1269,6 +1274,12 @@ class TimeWeaver:
             result['trend'] * (1 + result['multiplicative_terms'])
             + result['additive_terms']
         )
+
+        if self.uncertainty_samples > 0:
+            intervals = self.predict_uncertainty(df)
+            for col in intervals.columns:
+                result[col] = intervals[col].values
+
         return result
 
     def _predict_seasonal_components(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -1298,6 +1309,165 @@ class TimeWeaver:
                 comp *= self.y_scale
             data[component] = np.nanmean(comp, axis=1)
         return pd.DataFrame(data)
+
+    def sample_predictive_trend(self, df: pd.DataFrame, iteration: int = 0) -> np.ndarray:
+        """Simulate trend using extrapolated generative model.
+
+        For future dates (t > 1), simulates new changepoints from a Poisson
+        process and samples delta magnitudes from a Laplace distribution.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Prediction dataframe with 't' column.
+        iteration : int
+            Sampling iteration index for parameters.
+
+        Returns
+        -------
+        np.ndarray
+            Simulated trend values.
+        """
+        k = self.params['k'][iteration, 0]
+        m = self.params['m'][iteration, 0]
+        deltas = self.params['delta'][iteration]
+
+        t = np.array(df['t'])
+        T = t.max()
+
+        changepoints_t = self.changepoints_t
+        assert changepoints_t is not None
+
+        if T > 1:
+            S = len(changepoints_t)
+            n_changes = np.random.poisson(S * (T - 1))
+        else:
+            n_changes = 0
+
+        if n_changes > 0:
+            changepoint_ts_new = 1 + np.random.rand(n_changes) * (T - 1)
+            changepoint_ts_new.sort()
+        else:
+            changepoint_ts_new = np.array([])
+
+        lambda_ = np.mean(np.abs(deltas)) + 1e-8
+        deltas_new = np.random.laplace(0, lambda_, n_changes)
+
+        combined_changepoints = np.concatenate((changepoints_t, changepoint_ts_new))
+        combined_deltas = np.concatenate((deltas, deltas_new))
+
+        if self.growth == 'linear':
+            trend = self.piecewise_linear(t, combined_deltas, k, m, combined_changepoints)
+        elif self.growth == 'logistic':
+            cap = df['cap_scaled']
+            trend = self.piecewise_logistic(t, cap, combined_deltas, k, m, combined_changepoints)
+        else:
+            trend = self.flat_trend(t, m)
+
+        return trend * self.y_scale + df['floor'].values
+
+    def sample_model(
+        self,
+        df: pd.DataFrame,
+        seasonal_features: pd.DataFrame,
+        iteration: int,
+        s_a: pd.Series,
+        s_m: pd.Series,
+    ) -> dict[str, np.ndarray]:
+        """Simulate observations from the extrapolated generative model.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Prediction dataframe.
+        seasonal_features : pd.DataFrame
+            Seasonal features matrix.
+        iteration : int
+            Sampling iteration index.
+        s_a : pd.Series
+            Indicator for additive components.
+        s_m : pd.Series
+            Indicator for multiplicative components.
+
+        Returns
+        -------
+        dict
+            Dictionary with 'yhat' and 'trend' arrays.
+        """
+        trend = self.sample_predictive_trend(df, iteration)
+
+        beta = self.params['beta'][iteration]
+        Xb_a = np.matmul(seasonal_features.values, beta * s_a.values) * self.y_scale
+        Xb_m = np.matmul(seasonal_features.values, beta * s_m.values)
+
+        sigma = self.params['sigma_obs'][iteration, 0]
+        noise = np.random.normal(0, sigma, df.shape[0]) * self.y_scale
+
+        return {
+            'yhat': trend * (1 + Xb_m) + Xb_a + noise,
+            'trend': trend,
+        }
+
+    def sample_posterior_predictive(
+        self, df: pd.DataFrame
+    ) -> dict[str, np.ndarray]:
+        """Sample from posterior predictive distribution.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Prediction dataframe.
+
+        Returns
+        -------
+        dict
+            Dictionary with 'yhat' and 'trend' arrays of shape (n_rows, n_samples).
+        """
+        n_iterations = self.params['k'].shape[0]
+        samp_per_iter = max(1, int(np.ceil(
+            self.uncertainty_samples / float(n_iterations)
+        )))
+
+        seasonal_features, _, component_cols, _ = (
+            self._make_all_seasonality_features(df)
+        )
+
+        s_a = component_cols['additive_terms']
+        s_m = component_cols['multiplicative_terms']
+
+        sim_values: dict[str, list] = {'yhat': [], 'trend': []}
+        for i in range(n_iterations):
+            for _ in range(samp_per_iter):
+                sim = self.sample_model(df, seasonal_features, i, s_a, s_m)
+                sim_values['yhat'].append(sim['yhat'])
+                sim_values['trend'].append(sim['trend'])
+
+        return {k: np.column_stack(v) for k, v in sim_values.items()}
+
+    def predict_uncertainty(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Compute prediction intervals for yhat and trend.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Prediction dataframe.
+
+        Returns
+        -------
+        pd.DataFrame
+            Dataframe with lower and upper bounds for yhat and trend.
+        """
+        sim_values = self.sample_posterior_predictive(df)
+
+        lower_p = 100 * (1.0 - self.interval_width) / 2
+        upper_p = 100 * (1.0 + self.interval_width) / 2
+
+        series = {}
+        for key in ['yhat', 'trend']:
+            series[f'{key}_lower'] = np.percentile(sim_values[key], lower_p, axis=1)
+            series[f'{key}_upper'] = np.percentile(sim_values[key], upper_p, axis=1)
+
+        return pd.DataFrame(series)
 
     def make_future_dataframe(
         self,
