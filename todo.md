@@ -10,7 +10,7 @@ Build the forecasting library in layers: first implement the core forecaster wit
 - [x] Task 4: Extra regressors support (extend forecaster.py + tests)
 - [x] Task 5: Prediction and uncertainty estimation (extend forecaster.py + tests)
 - [x] Task 6: Cross-validation and performance metrics (src/timeweaver/validation.py + tests)
-- [ ] Task 7: Model serialization to/from JSON (src/timeweaver/storage.py + tests)
+- [x] Task 7: Model serialization to/from JSON (src/timeweaver/storage.py + tests)
 - [ ] Task 8: Country holidays integration (src/timeweaver/holidays.py + tests)
 - [ ] Task 9: Plotting forecasts and components (src/timeweaver/visualization.py + tests)
 - [ ] Task 10: Warm-start utilities (src/timeweaver/utilities.py + tests)

@@ -88,3 +88,17 @@
 - [x] Unfitted model raises RuntimeError
 - [x] Metrics skip coverage when intervals not available
 - [x] Validation functions exported from package
+
+## Task 7: Model serialization to/from JSON
+
+### Acceptance Criteria
+- [x] model_to_dict() converts fitted model to dictionary
+- [x] model_from_dict() reconstructs model from dictionary
+- [x] model_to_json() serializes model to JSON string
+- [x] model_from_json() deserializes model from JSON string
+- [x] save_model() saves model to file
+- [x] load_model() loads model from file
+- [x] Roundtrip preserves predictions
+- [x] Works with regressors and holidays
+- [x] Unfitted model raises ValueError
+- [x] Storage functions exported from package

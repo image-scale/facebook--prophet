@@ -42,3 +42,11 @@
 **Commit**: Add cross-validation and performance metrics module
 **Acceptance**: 10/10 criteria met
 **Verification**: tests FAIL on previous state (validation module not present), PASS on current state
+
+## Round 7
+**Task**: Task 7 — Model serialization to/from JSON
+**Files created**: src/timeweaver/storage.py, tests/test_storage.py
+**Files modified**: src/timeweaver/__init__.py
+**Commit**: Add model serialization to JSON and file storage
+**Acceptance**: 10/10 criteria met
+**Verification**: tests FAIL on previous state (storage module not present), PASS on current state
