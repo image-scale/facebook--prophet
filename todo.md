@@ -4,7 +4,7 @@
 Build the forecasting library in layers: first implement the core forecaster with trend modeling and prediction capabilities (can work without Stan backend for simple cases), then add seasonality/holiday features, then cross-validation/diagnostics, and finally serialization and plotting. Each feature will be testable independently with synthetic data.
 
 ## Tasks
-- [ ] Task 1: Core forecaster with trend modeling (src/timeweaver/forecaster.py + tests/test_forecaster.py)
+- [>] Task 1: Core forecaster with trend modeling (src/timeweaver/forecaster.py + tests/test_forecaster.py)
 - [ ] Task 2: Seasonality components with Fourier series (extend forecaster.py + tests)
 - [ ] Task 3: Holiday effects with windows and prior scales (extend forecaster.py + tests)
 - [ ] Task 4: Extra regressors support (extend forecaster.py + tests)
