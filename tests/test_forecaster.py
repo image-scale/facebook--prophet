@@ -702,3 +702,174 @@ class TestTimeWeaverSeasonalityModes:
         assert 'additive_terms' in forecast.columns
         assert 'multiplicative_terms' in forecast.columns
         assert 'yhat' in forecast.columns
+
+
+class TestTimeWeaverHolidays:
+    """Tests for holiday effects."""
+
+    def test_holidays_basic(self):
+        """Test basic holiday features."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15', '2012-12-25'],
+            'holiday': ['special_day', 'christmas'],
+        })
+        m = TimeWeaver(holidays=holidays, weekly_seasonality=False, yearly_seasonality=False)
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m.fit(df)
+        forecast = m.predict()
+        assert 'holidays' in forecast.columns
+
+    def test_holidays_with_window(self):
+        """Test holidays with lower and upper window."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15'],
+            'holiday': ['special_day'],
+            'lower_window': [-2],
+            'upper_window': [1],
+        })
+        m = TimeWeaver(holidays=holidays, weekly_seasonality=False, yearly_seasonality=False)
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m.fit(df)
+        # Should have 4 features: -2, -1, 0, +1
+        assert m.train_holiday_names is not None
+        assert len(m.train_holiday_names) == 4
+
+    def test_holidays_validation_missing_ds(self):
+        """Test that holidays must have ds column."""
+        holidays = pd.DataFrame({'holiday': ['test']})
+        with pytest.raises(ValueError, match='"ds" and "holiday" columns'):
+            TimeWeaver(holidays=holidays)
+
+    def test_holidays_validation_missing_holiday(self):
+        """Test that holidays must have holiday column."""
+        holidays = pd.DataFrame({'ds': ['2012-01-01']})
+        with pytest.raises(ValueError, match='"ds" and "holiday" columns'):
+            TimeWeaver(holidays=holidays)
+
+    def test_holidays_validation_nan(self):
+        """Test that NaN in holidays raises error."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-01-01', None],
+            'holiday': ['test', 'test2'],
+        })
+        with pytest.raises(ValueError, match='Found a NaN'):
+            TimeWeaver(holidays=holidays)
+
+    def test_holidays_validation_lower_window_positive(self):
+        """Test that lower_window > 0 raises error."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-01-01'],
+            'holiday': ['test'],
+            'lower_window': [1],
+            'upper_window': [2],
+        })
+        with pytest.raises(ValueError, match='lower_window should be <= 0'):
+            TimeWeaver(holidays=holidays)
+
+    def test_holidays_validation_upper_window_negative(self):
+        """Test that upper_window < 0 raises error."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-01-01'],
+            'holiday': ['test'],
+            'lower_window': [-1],
+            'upper_window': [-1],
+        })
+        with pytest.raises(ValueError, match='upper_window should be >= 0'):
+            TimeWeaver(holidays=holidays)
+
+    def test_holidays_validation_window_both_required(self):
+        """Test that both window columns must be present or neither."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-01-01'],
+            'holiday': ['test'],
+            'lower_window': [-1],
+        })
+        with pytest.raises(ValueError, match='both lower_window and upper_window'):
+            TimeWeaver(holidays=holidays)
+
+    def test_holidays_prior_scale(self):
+        """Test per-holiday prior scale."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15', '2012-12-25'],
+            'holiday': ['special', 'christmas'],
+            'prior_scale': [5.0, 15.0],
+        })
+        m = TimeWeaver(holidays=holidays, weekly_seasonality=False, yearly_seasonality=False)
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m.fit(df)
+        assert m.train_holiday_names is not None
+
+    def test_holidays_default_prior_scale(self):
+        """Test default holidays_prior_scale applies."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15'],
+            'holiday': ['special'],
+        })
+        m = TimeWeaver(holidays=holidays, holidays_prior_scale=20.0)
+        assert m.holidays_prior_scale == 20.0
+
+    def test_holidays_additive_mode(self):
+        """Test holidays with additive mode."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15'],
+            'holiday': ['special'],
+        })
+        m = TimeWeaver(holidays=holidays, holidays_mode='additive',
+                       weekly_seasonality=False, yearly_seasonality=False)
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m.fit(df)
+        assert m.holidays_mode == 'additive'
+        assert 'holidays' in m.component_modes['additive']
+
+    def test_holidays_multiplicative_mode(self):
+        """Test holidays with multiplicative mode."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15'],
+            'holiday': ['special'],
+        })
+        m = TimeWeaver(holidays=holidays, holidays_mode='multiplicative',
+                       weekly_seasonality=False, yearly_seasonality=False)
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m.fit(df)
+        assert m.holidays_mode == 'multiplicative'
+        assert 'holidays' in m.component_modes['multiplicative']
+
+    def test_holidays_in_prediction(self):
+        """Test that holidays affect predictions on holiday dates."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15'],
+            'holiday': ['special'],
+        })
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m = TimeWeaver(holidays=holidays, weekly_seasonality=False, yearly_seasonality=False)
+        m.fit(df)
+        forecast = m.predict()
+        # Holiday column should exist
+        assert 'holidays' in forecast.columns
+        # Holiday effect should be non-zero on holiday date
+        holiday_row = forecast[forecast['ds'] == pd.Timestamp('2012-06-15')]
+        assert len(holiday_row) == 1
+
+    def test_holidays_multiple_same_name(self):
+        """Test multiple occurrences of the same holiday."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-01-01', '2012-07-04', '2013-01-01'],
+            'holiday': ['new_year', 'independence', 'new_year'],
+        })
+        m = TimeWeaver(holidays=holidays, weekly_seasonality=False, yearly_seasonality=False)
+        df = create_daily_data(start="2012-01-01", periods=365 * 2)
+        m.fit(df)
+        assert m.train_holiday_names is not None
+
+    def test_holidays_future_prediction(self):
+        """Test that holidays work in future predictions."""
+        holidays = pd.DataFrame({
+            'ds': ['2012-06-15', '2013-06-15'],
+            'holiday': ['special', 'special'],
+        })
+        df = create_daily_data(start="2012-01-01", periods=365)
+        m = TimeWeaver(holidays=holidays, weekly_seasonality=False, yearly_seasonality=False)
+        m.fit(df)
+        future = m.make_future_dataframe(periods=365, include_history=False)
+        forecast = m.predict(future)
+        assert 'holidays' in forecast.columns

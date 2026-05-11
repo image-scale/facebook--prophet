@@ -119,7 +119,7 @@ class TimeWeaver:
         self.country_holidays: str | None = None
         self.train_component_cols: pd.DataFrame | None = None
         self.component_modes: dict[str, list[str]] | None = None
-        self.train_holiday_names: pd.Series | None = None
+        self.train_holiday_names: list[str] | None = None
         self.fit_kwargs: dict[str, Any] = {}
 
         self._validate_inputs()
@@ -601,6 +601,107 @@ class TimeWeaver:
         ]
         return pd.DataFrame(features, columns=columns)
 
+    def _construct_holiday_dataframe(
+        self, dates: pd.Series
+    ) -> tuple[pd.DataFrame | None, list[float], list[str]]:
+        """Construct expanded holiday dataframe with windows.
+
+        Parameters
+        ----------
+        dates : pd.Series
+            Series of timestamps.
+
+        Returns
+        -------
+        tuple
+            (holidays_df, prior_scales, holiday_names)
+            holidays_df has columns for each holiday+offset combination.
+        """
+        if self.holidays is None:
+            return None, [], []
+
+        holidays = self.holidays.copy()
+        holidays['ds'] = pd.to_datetime(holidays['ds'])
+
+        all_holidays = []
+        prior_scales: list[float] = []
+        holiday_names: list[str] = []
+
+        for _, row in holidays.iterrows():
+            dt = row['ds']
+            holiday_name = row['holiday']
+            lower_window = int(row.get('lower_window', 0))
+            upper_window = int(row.get('upper_window', 0))
+            prior_scale = row.get('prior_scale', self.holidays_prior_scale)
+
+            for offset in range(lower_window, upper_window + 1):
+                offset_date = dt + pd.Timedelta(days=offset)
+                col_name = f'{holiday_name}_delim_{offset}'
+                all_holidays.append({
+                    'ds': offset_date,
+                    'holiday': holiday_name,
+                    'col_name': col_name,
+                    'prior_scale': float(prior_scale),
+                })
+                if col_name not in holiday_names:
+                    holiday_names.append(col_name)
+                    prior_scales.append(float(prior_scale))
+
+        if len(all_holidays) == 0:
+            return None, [], []
+
+        holidays_df = pd.DataFrame(all_holidays)
+        return holidays_df, prior_scales, holiday_names
+
+    def _make_holiday_features(
+        self, df: pd.DataFrame
+    ) -> tuple[pd.DataFrame, list[float], list[str]]:
+        """Create one-hot encoded holiday features.
+
+        Parameters
+        ----------
+        df : pd.DataFrame
+            Dataframe with dates.
+
+        Returns
+        -------
+        tuple
+            (holiday_features, prior_scales, holiday_names)
+        """
+        expanded, prior_scales, holiday_names = self._construct_holiday_dataframe(
+            df['ds']
+        )
+
+        if expanded is None or len(holiday_names) == 0:
+            return pd.DataFrame({'zeros': np.zeros(df.shape[0])}), [1.0], []
+
+        n_rows = df.shape[0]
+        dates = df['ds'].values
+
+        if self.train_holiday_names is not None:
+            holiday_names = self.train_holiday_names
+            prior_scales = []
+            for col_name in holiday_names:
+                matching = expanded[expanded['col_name'] == col_name]
+                if len(matching) > 0:
+                    prior_scales.append(float(matching['prior_scale'].iloc[0]))
+                else:
+                    prior_scales.append(self.holidays_prior_scale)
+
+        feature_data = {}
+        for col_name in holiday_names:
+            feature_data[col_name] = np.zeros(n_rows)
+
+        for _, row in expanded.iterrows():
+            col_name = row['col_name']
+            if col_name in feature_data:
+                match_idx = np.where(dates == row['ds'])[0]
+                for idx in match_idx:
+                    feature_data[col_name][idx] = 1.0
+
+        holiday_features = pd.DataFrame(feature_data)
+        return holiday_features, prior_scales, holiday_names
+
     def _validate_column_name(
         self,
         name: str,
@@ -817,7 +918,7 @@ class TimeWeaver:
     def _make_all_seasonality_features(
         self, df: pd.DataFrame
     ) -> tuple[pd.DataFrame, list[float], pd.DataFrame, dict[str, list[str]]]:
-        """Create all seasonality features.
+        """Create all seasonality and holiday features.
 
         Parameters
         ----------
@@ -845,6 +946,15 @@ class TimeWeaver:
             seasonal_features.append(features)
             prior_scales.extend([props['prior_scale']] * features.shape[1])
             modes[props['mode']].append(name)
+
+        holiday_features, holiday_priors, holiday_names = self._make_holiday_features(df)
+        if len(holiday_names) > 0:
+            seasonal_features.append(holiday_features)
+            prior_scales.extend(holiday_priors)
+            if self.holidays_mode == 'multiplicative':
+                modes['multiplicative'].append('holidays')
+            else:
+                modes['additive'].append('holidays')
 
         # Dummy to prevent empty X
         if len(seasonal_features) == 0:
@@ -884,6 +994,18 @@ class TimeWeaver:
                 x.split('_delim_')[0] for x in seasonal_features.columns
             ],
         })
+
+        # Identify holiday columns and add 'holidays' group
+        holiday_names_in_cols = set()
+        if self.train_holiday_names is not None:
+            for col in seasonal_features.columns:
+                prefix = col.split('_delim_')[0]
+                if any(col.startswith(hn.split('_delim_')[0]) for hn in self.train_holiday_names):
+                    holiday_names_in_cols.add(prefix)
+        if holiday_names_in_cols:
+            components = self._add_group_component(
+                components, 'holidays', list(holiday_names_in_cols)
+            )
 
         for mode in ('additive', 'multiplicative'):
             components = self._add_group_component(
@@ -971,6 +1093,11 @@ class TimeWeaver:
 
         self.history = self.prepare_dataframe(history, initialize_scales=True)
         self._set_auto_seasonalities()
+
+        # Store holiday names before making features
+        _, _, holiday_names = self._make_holiday_features(self.history)
+        self.train_holiday_names = holiday_names if holiday_names else None
+
         seasonal_features, prior_scales, component_cols, modes = (
             self._make_all_seasonality_features(self.history)
         )

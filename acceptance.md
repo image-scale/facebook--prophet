@@ -23,13 +23,26 @@
 ## Task 2: Seasonality components with Fourier series
 
 ### Acceptance Criteria
-- [ ] fourier_series(dates, period, series_order) generates sin/cos features
-- [ ] Weekly seasonality auto-detected when history >= 2 weeks and spacing < 7 days
-- [ ] Yearly seasonality auto-detected when history >= 2 years
-- [ ] Daily seasonality auto-detected when history >= 2 days and spacing < 1 day
-- [ ] add_seasonality(name, period, fourier_order) adds custom seasonality
-- [ ] Conditional seasonality with condition_name column support
-- [ ] Seasonality features integrated into prediction
-- [ ] seasonality_mode can be 'additive' or 'multiplicative'
-- [ ] Seasonality prior scale controls regularization
-- [ ] Duplicate seasonality names raise ValueError
+- [x] fourier_series(dates, period, series_order) generates sin/cos features
+- [x] Weekly seasonality auto-detected when history >= 2 weeks and spacing < 7 days
+- [x] Yearly seasonality auto-detected when history >= 2 years
+- [x] Daily seasonality auto-detected when history >= 2 days and spacing < 1 day
+- [x] add_seasonality(name, period, fourier_order) adds custom seasonality
+- [x] Conditional seasonality with condition_name column support
+- [x] Seasonality features integrated into prediction
+- [x] seasonality_mode can be 'additive' or 'multiplicative'
+- [x] Seasonality prior scale controls regularization
+- [x] Built-in seasonality names can be overridden
+
+## Task 3: Holiday effects with windows and prior scales
+
+### Acceptance Criteria
+- [x] Holidays passed as DataFrame with 'ds' and 'holiday' columns
+- [x] lower_window and upper_window specify days around holiday
+- [x] Holiday features created with one-hot encoding for each holiday+offset
+- [x] prior_scale per holiday controls regularization strength
+- [x] holidays_prior_scale default applies to all holidays
+- [x] Holidays integrated into prediction with separate 'holidays' component
+- [x] holidays_mode can be 'additive' or 'multiplicative'
+- [x] Validation: holidays must have ds and holiday columns
+- [x] Validation: lower_window must be <= 0, upper_window >= 0
