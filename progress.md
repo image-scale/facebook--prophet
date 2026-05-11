@@ -34,3 +34,11 @@
 **Commit**: Add prediction uncertainty with simulated trend extrapolation
 **Acceptance**: 10/10 criteria met
 **Verification**: tests FAIL on previous state (uncertainty methods not present), PASS on current state
+
+## Round 6
+**Task**: Task 6 — Cross-validation and performance metrics
+**Files created**: src/timeweaver/validation.py, tests/test_validation.py
+**Files modified**: src/timeweaver/__init__.py
+**Commit**: Add cross-validation and performance metrics module
+**Acceptance**: 10/10 criteria met
+**Verification**: tests FAIL on previous state (validation module not present), PASS on current state

@@ -74,3 +74,17 @@
 - [x] sigma_obs computed from training residuals
 - [x] Uncertainty wider for future dates due to extrapolation
 - [x] Works with all growth types (linear, logistic, flat)
+
+## Task 6: Cross-validation and performance metrics
+
+### Acceptance Criteria
+- [x] generate_cutoffs() creates cutoff dates with proper spacing
+- [x] cross_validation() performs time series cross-validation
+- [x] cross_validation() returns df with ds, yhat, y, cutoff columns
+- [x] Custom cutoffs can be provided to cross_validation()
+- [x] mse, rmse, mae, mape, smape metric functions implemented
+- [x] coverage metric computes interval coverage
+- [x] performance_metrics() computes metrics by horizon
+- [x] Unfitted model raises RuntimeError
+- [x] Metrics skip coverage when intervals not available
+- [x] Validation functions exported from package
